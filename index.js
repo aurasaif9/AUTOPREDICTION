@@ -15,12 +15,9 @@ function defaultConfig() {
     lossStickerFileId: "",
     seasonStartStickerFileId: "",
     seasonEndStickerFileId: "",
-    dailySignals: 200,
     seasons: [],
     teamName: "DeSh Club",
     isRunning: false,
-    signalsSentToday: 0,
-    lastSignalDate: "",
     adminIds: [],
     sessionHistory: []
   };
@@ -226,24 +223,23 @@ let lastInSession = false;
 function mainMenuKb() {
   return {
     inline_keyboard: [
-      [{ text: "⚙️ SETTING", callback_data: "menu_settings" }, { text: "📊 STATUS", callback_data: "menu_status" }],
+      [{ text: "⚙️ SETTINGS", callback_data: "menu_settings" }, { text: "📊 STATUS", callback_data: "menu_status" }],
       [{ text: "▶️ START BOT", callback_data: "menu_start" }, { text: "⏹ STOP BOT", callback_data: "menu_stop" }],
-      [{ text: "🧪 TEST SIGNAL", callback_data: "menu_test" }]
+      [{ text: "🧪TEST SIGNAL", callback_data: "menu_test" }]
     ]
   };
 }
 function settingsKb() {
   return {
     inline_keyboard: [
-      [{ text: " ➕ ADD CHANNEL", callback_data: "set_channel" }],
+      [{ text: "➕ ADD CHANNEL", callback_data: "set_channel" }],
       [{ text: "🟢 BIG IMAGE", callback_data: "set_big_image" }, { text: "🔴 SMALL Image", callback_data: "set_small_image" }],
-      [{ text: "✅ WIN STICKER", callback_data: "set_win_sticker" }, { text: "❌ LOSS Sticker", callback_data: "set_loss_sticker" }],
-      [{ text: "🚀 Season START STICKER", callback_data: "set_season_start_sticker" }],
-      [{ text: "🏁 Season END STICKER", callback_data: "set_season_end_sticker" }],
-      [{ text: "📊 Daily Signals (cap)", callback_data: "set_daily_signals" }],
-      [{ text: "⏰ Set Sessions (4 max)", callback_data: "set_seasons" }],
-      [{ text: "👥 Team Name", callback_data: "set_team_name" }],
-      [{ text: "🔙 Back", callback_data: "menu_main" }]
+      [{ text: "✅ WIN STCIKER", callback_data: "set_win_sticker" }, { text: "❌ LOSS Sticker", callback_data: "set_loss_sticker" }],
+      [{ text: "🚀 SESSION START STICKER", callback_data: "set_season_start_sticker" }],
+      [{ text: "🏁 SESSION END STICKER", callback_data: "set_season_end_sticker" }],
+      [{ text: "⏰ SET SESSION (4 MAX)", callback_data: "set_seasons" }],
+      [{ text: "👥 TEAM NAME", callback_data: "set_team_name" }],
+      [{ text: "🔙 BACK", callback_data: "menu_main" }]
     ]
   };
 }
@@ -268,25 +264,15 @@ function isInSession() {
     return cur >= sh * 60 + sm && cur < eh * 60 + em;
   });
 }
-function resetDailyIfNeeded() {
-  const { dateStr } = getBDTime();
-  if (cfg.lastSignalDate !== dateStr) {
-    cfg.signalsSentToday = 0;
-    cfg.lastSignalDate = dateStr;
-    saveConfig(cfg);
-  }
-}
 function canSendSignal() {
-  resetDailyIfNeeded();
-  // joto session time toto signal — daily cap soft (200 default)
-  return cfg.isRunning && !!cfg.channelId && isInSession() && cfg.signalsSentToday < cfg.dailySignals;
+  // Session window er moddhe unlimited signals — no daily cap
+  return cfg.isRunning && !!cfg.channelId && isInSession();
 }
 function seasonsText() {
   if (cfg.seasons.length === 0) return "  No restriction (sends anytime)";
   return cfg.seasons.map((s, i) => `  Season ${i + 1}: ${s.start} – ${s.end}`).join("\n");
 }
 function statusText() {
-  resetDailyIfNeeded();
   const { h, m } = getBDTime();
   const nowStr = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
   return `📊 *Bot Status*
@@ -299,8 +285,6 @@ function statusText() {
 ${seasonsText()}
 
 📍 Now: \`${nowStr}\` BD — ${isInSession() ? "✅ In Session" : "⏸ Out of Session"}
-📊 Signals Today: ${cfg.signalsSentToday}/${cfg.dailySignals}
-🎯 Remaining: ${Math.max(0, cfg.dailySignals - cfg.signalsSentToday)}
 🟢 BIG Img: ${cfg.bigImageFileId ? "✅" : "❌"} | 🔴 SMALL Img: ${cfg.smallImageFileId ? "✅" : "❌"}
 ✅ Win: ${cfg.winStickerFileId ? "✅" : "❌"} | ❌ Loss: ${cfg.lossStickerFileId ? "✅" : "❌"}
 🚀 Season Start: ${cfg.seasonStartStickerFileId ? "✅" : "❌"} | 🏁 Season End: ${cfg.seasonEndStickerFileId ? "✅" : "❌"}
@@ -361,7 +345,7 @@ No predictions were made this season\\.`;
   }).join("\n");
   return `${header}
 ━━━━━━━━━━━━━━━━━━━━
-📊 *WIN LOSS HISTORY*
+📊 *Season Summary*
 
 Total Signals: *${total}*
 ✅ WIN: *${wins}* \\(${winPct}%\\)
@@ -406,8 +390,8 @@ async function handleSeasonStart() {
   cfg.sessionHistory = [];
   saveConfig(cfg);
   const label = currentSeasonLabel();
-  console.log(`🚀 Season START detected (${label})`);
-  await sendToChannel(`🚀 *SEASON STARTED*
+  console.log(`🚀 SESSION START detected (${label})`);
+  await sendToChannel(`🚀 *SESSION STARTED*
 ━━━━━━━━━━━━━━━━━━━━
 🤖 ${escapeMd(cfg.teamName)} AI BOT
 ${label ? `⏰ ${escapeMd(label)}` : ""}
@@ -432,10 +416,6 @@ async function sendSignal(pred, period, nums, conf, force = false) {
       await bot.sendMessage(cfg.channelId, caption, { parse_mode: "MarkdownV2" });
     }
     lastSentPeriod = period;
-    if (!force) {
-      cfg.signalsSentToday++;
-      saveConfig(cfg);
-    }
     console.log(`✅ Signal [${period}] → ${pred} (${conf}%)`);
     return true;
   } catch (e) {
@@ -655,13 +635,13 @@ Wait 1 minute and try again.`
         chatId,
         `📢 *Set Channel*
 
-Ye kono format e dite paro:
+যে কোন ফরম্যাট দিতে পারো:
 • \`@mychannel\`
 • \`mychannel\`
 • \`https://t.me/mychannel\`
 • \`-1001234567890\`
 
-⚠️ Bot ke channel-e *Admin* koro age!`,
+⚠️ আগে বট কে *Admin* করো  !`,
         { parse_mode: "Markdown" }
       );
       break;
@@ -693,21 +673,13 @@ LOSS er por jeta pathaite chao sei sticker ta patha:`, { parse_mode: "Markdown" 
       adminStates.set(uid, "wait_season_start_sticker");
       await bot.sendMessage(chatId, `🚀 *SEASON START Sticker*
 
-Jokon notun season start hobe tokon ja pathaite chao sei sticker ta patha:`, { parse_mode: "Markdown" });
+যখন নতুন সেশন শুরু হবে তখন যে স্টিকার টা পাঠাতে চাও সেটা দেও:`, { parse_mode: "Markdown" });
       break;
     case "set_season_end_sticker":
       adminStates.set(uid, "wait_season_end_sticker");
       await bot.sendMessage(chatId, `🏁 *SEASON END Sticker*
 
-Jokon season sesh hobe tokon ja pathaite chao sei sticker ta patha (history er age jabe):`, { parse_mode: "Markdown" });
-      break;
-    case "set_daily_signals":
-      adminStates.set(uid, "wait_daily_signals");
-      await bot.sendMessage(chatId, `📊 *Daily Signals Cap*
-Current: *${cfg.dailySignals}*
-
-Session window er moddhe joto signal jaite parbe — soft cap.
-Send a number (1–500):`, { parse_mode: "Markdown" });
+যখন সেশন শেষ হবে তখন যে স্টিকার টা পাঠাতে চাও সেটা দেও:`, { parse_mode: "Markdown" });
       break;
     case "set_team_name":
       adminStates.set(uid, "wait_team_name");
@@ -858,19 +830,7 @@ ${built}`, { parse_mode: "Markdown", reply_markup: settingsKb() });
       adminStates.set(uid, "idle");
       await bot.sendMessage(chatId, `✅ *Channel set:* \`${cfg.channelId}\`
 
-🧪 Test korte Test Signal chapa!`, { parse_mode: "Markdown", reply_markup: settingsKb() });
-      break;
-    }
-    case "wait_daily_signals": {
-      const n = parseInt(text);
-      if (isNaN(n) || n < 1 || n > 500) {
-        await bot.sendMessage(chatId, `❌ Enter 1–500.`);
-        return;
-      }
-      cfg.dailySignals = n;
-      saveConfig(cfg);
-      adminStates.set(uid, "idle");
-      await bot.sendMessage(chatId, `✅ *Daily signals cap: ${n}*`, { parse_mode: "Markdown", reply_markup: settingsKb() });
+🧪 সিগন্যাল যাচ্ছে কিনা দেখতে চাইলে TEST SIGNAL এ চাপ দেও`, { parse_mode: "Markdown", reply_markup: settingsKb() });
       break;
     }
     case "wait_team_name": {
@@ -910,8 +870,6 @@ const healthServer = http.createServer((req, res) => {
     uptime_seconds: uptime,
     bd_time: nowStr,
     date: dateStr,
-    signals_today: cfg.signalsSentToday,
-    daily_limit: cfg.dailySignals,
     in_session: isInSession(),
     last_period: lastSentPeriod || "none",
     session_history_count: cfg.sessionHistory.length
