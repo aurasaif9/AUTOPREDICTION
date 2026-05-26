@@ -2,10 +2,11 @@ import TelegramBot from "node-telegram-bot-api";
 import fs from "fs";
 import path from "path";
 import https from "https";
-import http from "http";
 import { fileURLToPath } from "url";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_FILE = process.env.CONFIG_PATH ?? path.join(__dirname, "./bot-config.json");
+const CONFIG_FILE = process.env.CONFIG_PATH ?? path.join(__dirname, "../bot-config.json");
+
 function defaultConfig() {
   return {
     channelId: "",
@@ -22,6 +23,7 @@ function defaultConfig() {
     sessionHistory: []
   };
 }
+
 function loadConfig() {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
@@ -35,17 +37,19 @@ function loadConfig() {
       }
       return merged;
     }
-  } catch {
-  }
+  } catch {}
   return defaultConfig();
 }
-function saveConfig(cfg2) {
+
+function saveConfig(cfg) {
   try {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg2, null, 2), "utf-8");
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), "utf-8");
   } catch (e) {
     console.error("Config save error:", e);
   }
 }
+
+// ─── PREDICTION LOGIC ─────────────────────────────────────────────────────────
 const strategies = [
   (h) => h[0].n >= 5 ? "BIG" : "SMALL",
   (h) => h[0].n >= 5 ? "SMALL" : "BIG",
@@ -65,15 +69,15 @@ const strategies = [
       if ((h[i].n >= 5 ? "BIG" : "SMALL") === t) cnt++;
       else break;
     }
-    return cnt >= 3 ? t === "BIG" ? "SMALL" : "BIG" : t;
+    return cnt >= 3 ? (t === "BIG" ? "SMALL" : "BIG") : t;
   },
   (h) => {
     const t = h[0].n >= 5 ? "BIG" : "SMALL";
-    return h.length > 1 && (h[1].n >= 5 ? "BIG" : "SMALL") === t ? t : t === "BIG" ? "SMALL" : "BIG";
+    return h.length > 1 && (h[1].n >= 5 ? "BIG" : "SMALL") === t ? t : (t === "BIG" ? "SMALL" : "BIG");
   },
   (h) => {
     const bigs = h.slice(0, 10).filter((x) => x.n >= 5).length;
-    return bigs < 4 ? "BIG" : bigs > 6 ? "SMALL" : h[0].n >= 5 ? "BIG" : "SMALL";
+    return bigs < 4 ? "BIG" : bigs > 6 ? "SMALL" : (h[0].n >= 5 ? "BIG" : "SMALL");
   },
   (h) => {
     const w = [3, 2, 1];
@@ -95,6 +99,7 @@ const strategies = [
     return sorted[2] >= 5 ? "BIG" : "SMALL";
   }
 ];
+
 function multiVote(hist) {
   if (!hist || hist.length < 3) return { pred: "BIG", bigPct: 50, smallPct: 50, confidence: 50 };
   const scores = strategies.map((fn, idx) => {
@@ -105,11 +110,11 @@ function multiVote(hist) {
       try {
         if (fn(slice) === (hist[j].n >= 5 ? "BIG" : "SMALL")) score++;
         tested++;
-      } catch {
-      }
+      } catch {}
     }
     return { idx, rate: tested > 0 ? score / tested : 0.5 };
   }).sort((a, b) => b.rate - a.rate);
+
   let bigW = 0, smallW = 0;
   for (const s of scores.slice(0, 8)) {
     try {
@@ -117,8 +122,7 @@ function multiVote(hist) {
       const w = Math.max(0.1, s.rate);
       if (pred === "BIG") bigW += w;
       else smallW += w;
-    } catch {
-    }
+    } catch {}
   }
   const total = bigW + smallW;
   const bigPct = Math.round(bigW / total * 100);
@@ -131,14 +135,18 @@ function multiVote(hist) {
     confidence: Math.round(margin * 0.55 + bestRate * 0.45)
   };
 }
+
 function jackpotNums(pred, nextPeriod) {
   const ps = Number(BigInt(nextPeriod) % 3n);
   if (pred === "BIG") return ps === 0 ? [5, 7] : ps === 1 ? [6, 8] : [7, 9];
   return ps === 0 ? [0, 2] : ps === 1 ? [1, 3] : [2, 4];
 }
+// ─────────────────────────────────────────────────────────────────────────────
+
 const WINGO_ENDPOINTS = [
   { ip: "144.217.68.82", host: "auraxsaif.top", path: "/api/wingo/1m.php" }
 ];
+
 function fetchFromEndpoint(ep) {
   return new Promise((resolve, reject) => {
     const options = {
@@ -173,13 +181,14 @@ function fetchFromEndpoint(ep) {
       res.on("error", reject);
     });
     req.on("error", reject);
-    req.setTimeout(8e3, () => {
+    req.setTimeout(8000, () => {
       req.destroy();
       reject(new Error("Timeout"));
     });
     req.end();
   });
 }
+
 async function fetchWingo() {
   for (const ep of WINGO_ENDPOINTS) {
     try {
@@ -194,24 +203,27 @@ async function fetchWingo() {
   }
   return { items: [], live: false };
 }
+
 function generateFallbackHistory() {
   const now = new Date();
   const bd = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Dhaka" }));
   const ymd = `${bd.getFullYear()}${String(bd.getMonth() + 1).padStart(2, "0")}${String(bd.getDate()).padStart(2, "0")}`;
   const minuteOfDay = bd.getHours() * 60 + bd.getMinutes();
-  const baseSeq = 1e4 + minuteOfDay;
+  const baseSeq = 10000 + minuteOfDay;
   const hash = (n) => (n * 2654435761 >>> 0) % 10;
   return Array.from({ length: 20 }, (_, i) => ({
     period: `${ymd}0${String(baseSeq - i).padStart(5, "0")}`,
     n: hash(minuteOfDay - i)
   }));
 }
+
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!TOKEN) {
   console.error("❌ TELEGRAM_BOT_TOKEN missing!");
   process.exit(1);
 }
-const bot = new TelegramBot(TOKEN, { polling: { interval: 1e3, autoStart: true, params: { timeout: 10 } } });
+
+const bot = new TelegramBot(TOKEN, { polling: { interval: 1000, autoStart: true, params: { timeout: 10 } } });
 let cfg = loadConfig();
 const adminStates = new Map();
 const seasonBuildState = new Map();
@@ -220,40 +232,46 @@ let lastSentPeriod = "";
 let signalInterval = null;
 let seasonWatchInterval = null;
 let lastInSession = false;
+
 function mainMenuKb() {
   return {
     inline_keyboard: [
-      [{ text: "⚙️ SETTINGS", callback_data: "menu_settings" }, { text: "📊 STATUS", callback_data: "menu_status" }],
-      [{ text: "▶️ START BOT", callback_data: "menu_start" }, { text: "⏹ STOP BOT", callback_data: "menu_stop" }],
-      [{ text: "🧪TEST SIGNAL", callback_data: "menu_test" }]
+      [{ text: "⚙️ Settings", callback_data: "menu_settings" }, { text: "📊 Status", callback_data: "menu_status" }],
+      [{ text: "▶️ Start Bot", callback_data: "menu_start" }, { text: "⏹ Stop Bot", callback_data: "menu_stop" }],
+      [{ text: "🧪 Test Signal", callback_data: "menu_test" }]
     ]
   };
 }
+
 function settingsKb() {
   return {
     inline_keyboard: [
-      [{ text: "➕ ADD CHANNEL", callback_data: "set_channel" }],
-      [{ text: "🟢 BIG IMAGE", callback_data: "set_big_image" }, { text: "🔴 SMALL Image", callback_data: "set_small_image" }],
-      [{ text: "✅ WIN STCIKER", callback_data: "set_win_sticker" }, { text: "❌ LOSS Sticker", callback_data: "set_loss_sticker" }],
-      [{ text: "🚀 SESSION START STICKER", callback_data: "set_season_start_sticker" }],
-      [{ text: "🏁 SESSION END STICKER", callback_data: "set_season_end_sticker" }],
-      [{ text: "⏰ SET SESSION (4 MAX)", callback_data: "set_seasons" }],
-      [{ text: "👥 TEAM NAME", callback_data: "set_team_name" }],
-      [{ text: "🔙 BACK", callback_data: "menu_main" }]
+      [{ text: "📢 Set Channel", callback_data: "set_channel" }],
+      [{ text: "🟢 BIG Image", callback_data: "set_big_image" }, { text: "🔴 SMALL Image", callback_data: "set_small_image" }],
+      [{ text: "✅ WIN Sticker", callback_data: "set_win_sticker" }, { text: "❌ LOSS Sticker", callback_data: "set_loss_sticker" }],
+      [{ text: "🚀 Season START Sticker", callback_data: "set_season_start_sticker" }],
+      [{ text: "🏁 Season END Sticker", callback_data: "set_season_end_sticker" }],
+      [{ text: "⏰ Set Sessions (4 max)", callback_data: "set_seasons" }],
+      [{ text: "👥 Team Name", callback_data: "set_team_name" }],
+      [{ text: "🔙 Back", callback_data: "menu_main" }]
     ]
   };
 }
+
 function backKb() {
   return { inline_keyboard: [[{ text: "🔙 Back to Menu", callback_data: "menu_main" }]] };
 }
+
 function isAdmin(uid) {
   return cfg.adminIds.length === 0 || cfg.adminIds.includes(uid);
 }
+
 function getBDTime() {
   const now = new Date();
   const bd = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Dhaka" }));
   return { h: bd.getHours(), m: bd.getMinutes(), dateStr: bd.toLocaleDateString("en-US") };
 }
+
 function isInSession() {
   if (cfg.seasons.length === 0) return true;
   const { h, m } = getBDTime();
@@ -264,14 +282,16 @@ function isInSession() {
     return cur >= sh * 60 + sm && cur < eh * 60 + em;
   });
 }
+
 function canSendSignal() {
-  // Session window er moddhe unlimited signals — no daily cap
   return cfg.isRunning && !!cfg.channelId && isInSession();
 }
+
 function seasonsText() {
   if (cfg.seasons.length === 0) return "  No restriction (sends anytime)";
   return cfg.seasons.map((s, i) => `  Season ${i + 1}: ${s.start} – ${s.end}`).join("\n");
 }
+
 function statusText() {
   const { h, m } = getBDTime();
   const nowStr = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
@@ -290,10 +310,12 @@ ${seasonsText()}
 🚀 Season Start: ${cfg.seasonStartStickerFileId ? "✅" : "❌"} | 🏁 Season End: ${cfg.seasonEndStickerFileId ? "✅" : "❌"}
 ━━━━━━━━━━━━━━━`;
 }
+
 function confidenceBar(pct) {
   const filled = Math.max(0, Math.min(10, Math.round(pct / 10)));
   return "🟩".repeat(filled) + "⬜".repeat(10 - filled);
 }
+
 function predCaption(pred, period, nums, conf) {
   const signalIcon = pred === "BIG" ? "🟢 BIG" : "🔴 SMALL";
   const bar = confidenceBar(conf);
@@ -308,6 +330,7 @@ function predCaption(pred, period, nums, conf) {
 ✅ 5 STEPS FOLLOW PROFIT 100%
 🖥 SERVER: ${cfg.teamName.toUpperCase()} API`;
 }
+
 function resultCaption(p) {
   const actualLabel = (p.actual ?? 0) >= 5 ? "BIG" : "SMALL";
   const winText = p.win ? "✅ WIN" : "❌ LOSS";
@@ -321,9 +344,11 @@ function resultCaption(p) {
 💎 JACKPOT:  *${jackpotText}*
 ━━━━━━━━━━━━━━━━━━━━`;
 }
+
 function escapeMd(s) {
   return String(s).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, (m) => "\\" + m);
 }
+
 function sessionSummaryText(history, sessionLabel) {
   const total = history.length;
   const header = `🏁 *SEASON ENDED*${sessionLabel ? `  \\(${escapeMd(sessionLabel)}\\)` : ""}`;
@@ -356,6 +381,7 @@ Total Signals: *${total}*
 ${rows}
 ━━━━━━━━━━━━━━━━━━━━`;
 }
+
 async function sendToChannel(text) {
   if (!cfg.channelId) return;
   try {
@@ -364,6 +390,7 @@ async function sendToChannel(text) {
     console.error("Channel send error:", e.message);
   }
 }
+
 async function sendStickerToChannel(fileId) {
   if (!cfg.channelId || !fileId) return;
   try {
@@ -372,6 +399,7 @@ async function sendStickerToChannel(fileId) {
     console.error("Sticker send error:", e.message);
   }
 }
+
 function currentSeasonLabel() {
   const { h, m } = getBDTime();
   const cur = h * 60 + m;
@@ -386,12 +414,13 @@ function currentSeasonLabel() {
   }
   return "";
 }
+
 async function handleSeasonStart() {
   cfg.sessionHistory = [];
   saveConfig(cfg);
   const label = currentSeasonLabel();
-  console.log(`🚀 SESSION START detected (${label})`);
-  await sendToChannel(`🚀 *SESSION STARTED*
+  console.log(`🚀 Season START detected (${label})`);
+  await sendToChannel(`🚀 *SEASON STARTED*
 ━━━━━━━━━━━━━━━━━━━━
 🤖 ${escapeMd(cfg.teamName)} AI BOT
 ${label ? `⏰ ${escapeMd(label)}` : ""}
@@ -399,6 +428,7 @@ ${label ? `⏰ ${escapeMd(label)}` : ""}
 ━━━━━━━━━━━━━━━━━━━━`);
   await sendStickerToChannel(cfg.seasonStartStickerFileId);
 }
+
 async function handleSeasonEnd(prevLabel) {
   console.log(`🏁 Season END detected`);
   await sendStickerToChannel(cfg.seasonEndStickerFileId);
@@ -406,6 +436,7 @@ async function handleSeasonEnd(prevLabel) {
   cfg.sessionHistory = [];
   saveConfig(cfg);
 }
+
 async function sendSignal(pred, period, nums, conf, force = false) {
   const caption = predCaption(pred, period, nums, conf);
   const imgId = pred === "BIG" ? cfg.bigImageFileId : cfg.smallImageFileId;
@@ -423,6 +454,7 @@ async function sendSignal(pred, period, nums, conf, force = false) {
     return false;
   }
 }
+
 async function sendResult(p) {
   const caption = resultCaption(p);
   try {
@@ -436,12 +468,16 @@ async function sendResult(p) {
     console.error("Result send error:", e.message);
   }
 }
+
 async function signalCycle(force = false) {
   if (!force && !canSendSignal()) return "skipped";
   if (!cfg.channelId) return "no_channel";
+
   const { items, live } = await fetchWingo();
   const hist = live && items.length > 0 ? items : generateFallbackHistory();
   if (!live) console.log("⚠️  Using fallback prediction (API unreachable)");
+
+  // Check result for previous prediction
   if (lastPred && !lastPred.resultSent && live) {
     const found = items.find((i) => i.period === lastPred.period);
     if (found) {
@@ -451,27 +487,32 @@ async function signalCycle(force = false) {
       lastPred.jackpot = lastPred.nums.includes(found.n);
       lastPred.resultSent = true;
       await sendResult(lastPred);
-      // update matching entry in sessionHistory
       const idx = cfg.sessionHistory.findIndex((h) => h.period === lastPred.period);
       if (idx >= 0) cfg.sessionHistory[idx] = { ...lastPred };
       else cfg.sessionHistory.push({ ...lastPred });
       saveConfig(cfg);
     }
   }
+
+  // API theke latest period nao, tar sathe +1 koro — eita next period
   const latest = hist[0];
   const nextPeriod = (BigInt(latest.period) + 1n).toString();
+
   if (!force && lastSentPeriod === nextPeriod) return "duplicate";
+
   const vote = multiVote(hist);
   const nums = jackpotNums(vote.pred, nextPeriod);
   const ok = await sendSignal(vote.pred, nextPeriod, nums, vote.confidence, force);
   if (!ok) return "send_error";
+
   lastPred = { period: nextPeriod, pred: vote.pred, nums, conf: vote.confidence };
-  // Track this pending signal in session history immediately
   cfg.sessionHistory.push({ period: nextPeriod, pred: vote.pred, nums, conf: vote.confidence });
   saveConfig(cfg);
   return "ok";
 }
+
 let prevSeasonLabel = "";
+
 async function seasonWatchTick() {
   if (!cfg.isRunning) return;
   const nowIn = isInSession();
@@ -485,38 +526,32 @@ async function seasonWatchTick() {
     prevSeasonLabel = "";
   }
 }
+
 function startSignalLoop() {
   if (signalInterval) return;
   console.log("▶️  Signal loop started");
-  // initialise transition baseline
   lastInSession = isInSession();
   if (lastInSession) prevSeasonLabel = currentSeasonLabel();
   signalInterval = setInterval(() => {
     signalCycle().catch(console.error);
-  }, 6e4);
+  }, 60000);
   signalCycle().catch(console.error);
   if (!seasonWatchInterval) {
     seasonWatchInterval = setInterval(() => {
       seasonWatchTick().catch(console.error);
-    }, 15e3);
+    }, 15000);
   }
 }
+
 function stopSignalLoop() {
-  if (signalInterval) {
-    clearInterval(signalInterval);
-    signalInterval = null;
-  }
-  if (seasonWatchInterval) {
-    clearInterval(seasonWatchInterval);
-    seasonWatchInterval = null;
-  }
+  if (signalInterval) { clearInterval(signalInterval); signalInterval = null; }
+  if (seasonWatchInterval) { clearInterval(seasonWatchInterval); seasonWatchInterval = null; }
 }
+
 async function safeAnswer(queryId) {
-  try {
-    await bot.answerCallbackQuery(queryId);
-  } catch {
-  }
+  try { await bot.answerCallbackQuery(queryId); } catch {}
 }
+
 function currentSeasonIndex(state) {
   const map = {
     wait_s1_start: 0, wait_s1_end: 0,
@@ -526,9 +561,11 @@ function currentSeasonIndex(state) {
   };
   return map[state] ?? 0;
 }
+
 function ordinal(n) {
   return ["1st", "2nd", "3rd", "4th"][n] ?? `${n + 1}th`;
 }
+
 bot.onText(/\/start/, async (msg) => {
   const uid = msg.from.id;
   if (cfg.adminIds.length === 0) {
@@ -538,21 +575,20 @@ bot.onText(/\/start/, async (msg) => {
   adminStates.set(uid, "idle");
   await bot.sendMessage(
     msg.chat.id,
-    `🤖 *${cfg.teamName} AI BOT*
-━━━━━━━━━━━━━━━
-Wingo 1M Prediction Engine
-
-Select an option:`,
+    `🤖 *${cfg.teamName} AI BOT*\n━━━━━━━━━━━━━━━\nWingo 1M Prediction Engine\n\nSelect an option:`,
     { parse_mode: "Markdown", reply_markup: mainMenuKb() }
   );
 });
+
 bot.onText(/\/menu/, async (msg) => {
   adminStates.set(msg.from.id, "idle");
   await bot.sendMessage(msg.chat.id, `🤖 *Main Menu*`, { parse_mode: "Markdown", reply_markup: mainMenuKb() });
 });
+
 bot.onText(/\/status/, async (msg) => {
   await bot.sendMessage(msg.chat.id, statusText(), { parse_mode: "Markdown", reply_markup: backKb() });
 });
+
 bot.on("callback_query", async (query) => {
   const uid = query.from.id;
   const chatId = query.message.chat.id;
@@ -565,18 +601,18 @@ bot.on("callback_query", async (query) => {
   }
   const edit = (text, kb) => {
     const markup = kb ?? backKb();
-    return bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: "Markdown", reply_markup: markup }).catch(() => bot.sendMessage(chatId, text, { parse_mode: "Markdown", reply_markup: markup }));
+    return bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: "Markdown", reply_markup: markup })
+      .catch(() => bot.sendMessage(chatId, text, { parse_mode: "Markdown", reply_markup: markup }));
   };
+
   switch (data) {
     case "menu_main":
       adminStates.set(uid, "idle");
-      await edit(`🤖 *${cfg.teamName} AI BOT*
-Main Menu`, mainMenuKb());
+      await edit(`🤖 *${cfg.teamName} AI BOT*\nMain Menu`, mainMenuKb());
       break;
     case "menu_settings":
       adminStates.set(uid, "idle");
-      await edit(`⚙️ *Settings*
-Configure your bot:`, settingsKb());
+      await edit(`⚙️ *Settings*\nConfigure your bot:`, settingsKb());
       break;
     case "menu_status":
       await edit(statusText(), { inline_keyboard: [[{ text: "🔙 Back", callback_data: "menu_main" }]] });
@@ -585,305 +621,240 @@ Configure your bot:`, settingsKb());
       cfg.isRunning = true;
       cfg.sessionHistory = [];
       saveConfig(cfg);
-      // initialise baseline so first running season triggers a fresh start sticker
       lastInSession = false;
       startSignalLoop();
-      // immediate transition check (fires season start sticker if currently in a window)
       await seasonWatchTick();
-      await edit(`✅ *Bot Started!*
-
-Auto season start/end stickers + history will fire as sessions open and close.`, mainMenuKb());
+      await edit(`✅ *Bot Started!*\n\nAuto season start/end stickers + history will fire as sessions open and close.`, mainMenuKb());
       break;
     }
     case "menu_stop": {
       cfg.isRunning = false;
       saveConfig(cfg);
-      // if currently in a session, emit a manual season-end + summary
       if (lastInSession) {
         await handleSeasonEnd(prevSeasonLabel);
         lastInSession = false;
         prevSeasonLabel = "";
       }
       stopSignalLoop();
-      await edit(`⏹ *Bot Stopped!*
-Season end sticker + summary sent.`, mainMenuKb());
+      await edit(`⏹ *Bot Stopped!*\nSeason end sticker + summary sent.`, mainMenuKb());
       break;
     }
     case "menu_test": {
-      await edit(`🧪 *Sending test signal...*
-Channel: \`${cfg.channelId || "NOT SET"}\``);
+      await edit(`🧪 *Sending test signal...*\nChannel: \`${cfg.channelId || "NOT SET"}\``);
       const result = await signalCycle(true);
       const resultMsg = {
-        ok: `✅ *Test signal sent!*
-Channel: \`${cfg.channelId}\``,
-        no_channel: `❌ *Channel not set!*
-Settings → 📢 Set Channel`,
-        send_error: `❌ *Send failed!*
-
-Possible reasons:
-• Bot not Admin in channel
-• Wrong channel username`,
-        duplicate: `⚠️ *Same period already sent!*
-Wait 1 minute and try again.`
+        ok: `✅ *Test signal sent!*\nChannel: \`${cfg.channelId}\``,
+        no_channel: `❌ *Channel not set!*\nSettings → 📢 Set Channel`,
+        send_error: `❌ *Send failed!*\n\nPossible reasons:\n• Bot not Admin in channel\n• Wrong channel username`,
+        duplicate: `⚠️ *Same period already sent!*\nWait 1 minute and try again.`
       };
       await bot.sendMessage(chatId, resultMsg[result] ?? `❌ Error: \`${result}\``, { parse_mode: "Markdown", reply_markup: mainMenuKb() });
       break;
     }
     case "set_channel":
       adminStates.set(uid, "wait_channel");
-      await bot.sendMessage(
-        chatId,
-        `📢 *Set Channel*
-
-যে কোন ফরম্যাট দিতে পারো:
-• \`@mychannel\`
-• \`mychannel\`
-• \`https://t.me/mychannel\`
-• \`-1001234567890\`
-
-⚠️ আগে বট কে *Admin* করো  !`,
-        { parse_mode: "Markdown" }
-      );
+      await bot.sendMessage(chatId, `📢 *Set Channel*\n\nSend channel username or ID:\nExample: \`@mychannel\` or \`-1001234567890\``, { parse_mode: "Markdown" });
       break;
     case "set_big_image":
       adminStates.set(uid, "wait_big_image");
-      await bot.sendMessage(chatId, `🟢 *BIG Image*
-
-BIG prediction er jonne photo patha:`, { parse_mode: "Markdown" });
+      await bot.sendMessage(chatId, `🟢 *BIG Image*\n\nSend the BIG prediction image now.`, { parse_mode: "Markdown" });
       break;
     case "set_small_image":
       adminStates.set(uid, "wait_small_image");
-      await bot.sendMessage(chatId, `🔴 *SMALL Image*
-
-SMALL prediction er jonne photo patha:`, { parse_mode: "Markdown" });
+      await bot.sendMessage(chatId, `🔴 *SMALL Image*\n\nSend the SMALL prediction image now.`, { parse_mode: "Markdown" });
       break;
     case "set_win_sticker":
       adminStates.set(uid, "wait_win_sticker");
-      await bot.sendMessage(chatId, `✅ *WIN Sticker*
-
-WIN er por jeta pathaite chao sei sticker ta patha:`, { parse_mode: "Markdown" });
+      await bot.sendMessage(chatId, `✅ *WIN Sticker*\n\nSend the WIN sticker now.`, { parse_mode: "Markdown" });
       break;
     case "set_loss_sticker":
       adminStates.set(uid, "wait_loss_sticker");
-      await bot.sendMessage(chatId, `❌ *LOSS Sticker*
-
-LOSS er por jeta pathaite chao sei sticker ta patha:`, { parse_mode: "Markdown" });
+      await bot.sendMessage(chatId, `❌ *LOSS Sticker*\n\nSend the LOSS sticker now.`, { parse_mode: "Markdown" });
       break;
     case "set_season_start_sticker":
       adminStates.set(uid, "wait_season_start_sticker");
-      await bot.sendMessage(chatId, `🚀 *SEASON START Sticker*
-
-যখন নতুন সেশন শুরু হবে তখন যে স্টিকার টা পাঠাতে চাও সেটা দেও:`, { parse_mode: "Markdown" });
+      await bot.sendMessage(chatId, `🚀 *Season START Sticker*\n\nSend the sticker to use at season start.`, { parse_mode: "Markdown" });
       break;
     case "set_season_end_sticker":
       adminStates.set(uid, "wait_season_end_sticker");
-      await bot.sendMessage(chatId, `🏁 *SEASON END Sticker*
-
-যখন সেশন শেষ হবে তখন যে স্টিকার টা পাঠাতে চাও সেটা দেও:`, { parse_mode: "Markdown" });
+      await bot.sendMessage(chatId, `🏁 *Season END Sticker*\n\nSend the sticker to use at season end.`, { parse_mode: "Markdown" });
       break;
     case "set_team_name":
       adminStates.set(uid, "wait_team_name");
-      await bot.sendMessage(chatId, `👥 *Team Name*
-Current: *${cfg.teamName}*
-
-New name pathao:`, { parse_mode: "Markdown" });
+      await bot.sendMessage(chatId, `👥 *Team Name*\n\nSend your team name:`, { parse_mode: "Markdown" });
       break;
     case "set_seasons": {
-      cfg.seasons = [];
-      saveConfig(cfg);
-      seasonBuildState.set(uid, []);
-      adminStates.set(uid, "wait_s1_start");
-      await bot.sendMessage(
-        chatId,
-        `⏰ *Session Setup*
-Up to *4 sessions* set korte paro\\.
-
-🕐 *1st Season Start Time* pathao:
-Format: \`HH:MM\` \\(BD Time\\)
-Example: \`09:00\``,
-        { parse_mode: "MarkdownV2" }
+      const current = cfg.seasons.map((s, i) => `Season ${i + 1}: ${s.start}–${s.end}`).join("\n") || "None";
+      seasonBuildState.set(uid, { seasons: [], step: "wait_s1_start" });
+      adminStates.set(uid, "building_seasons");
+      await bot.sendMessage(chatId,
+        `⏰ *Set Sessions*\n\nCurrent:\n${current}\n\nLet's set up to 4 sessions.\n\nEnter *1st session START time* (HH:MM, 24h BD):`,
+        { parse_mode: "Markdown" }
       );
       break;
     }
-    case "season_skip":
-      adminStates.set(uid, "idle");
-      await bot.sendMessage(chatId, `✅ *Sessions Saved!*
-
-${seasonsText()}`, { parse_mode: "Markdown", reply_markup: settingsKb() });
+    default:
       break;
   }
 });
+
 bot.on("message", async (msg) => {
   const uid = msg.from?.id;
   if (!uid || !isAdmin(uid)) return;
-  const chatId = msg.chat.id;
   const state = adminStates.get(uid) ?? "idle";
-  if (state === "idle") return;
-  if (msg.sticker) {
-    const fileId = msg.sticker.file_id;
-    if (state === "wait_win_sticker") {
-      cfg.winStickerFileId = fileId;
-      saveConfig(cfg);
-      adminStates.set(uid, "idle");
-      await bot.sendMessage(chatId, `✅ *WIN sticker saved!*`, { parse_mode: "Markdown", reply_markup: settingsKb() });
-    } else if (state === "wait_loss_sticker") {
-      cfg.lossStickerFileId = fileId;
-      saveConfig(cfg);
-      adminStates.set(uid, "idle");
-      await bot.sendMessage(chatId, `✅ *LOSS sticker saved!*`, { parse_mode: "Markdown", reply_markup: settingsKb() });
-    } else if (state === "wait_season_start_sticker") {
-      cfg.seasonStartStickerFileId = fileId;
-      saveConfig(cfg);
-      adminStates.set(uid, "idle");
-      await bot.sendMessage(chatId, `✅ *Season START sticker saved!*`, { parse_mode: "Markdown", reply_markup: settingsKb() });
-    } else if (state === "wait_season_end_sticker") {
-      cfg.seasonEndStickerFileId = fileId;
-      saveConfig(cfg);
-      adminStates.set(uid, "idle");
-      await bot.sendMessage(chatId, `✅ *Season END sticker saved!*`, { parse_mode: "Markdown", reply_markup: settingsKb() });
-    }
-    return;
-  }
-  if (msg.photo) {
-    const fileId = msg.photo[msg.photo.length - 1].file_id;
-    if (state === "wait_big_image") {
-      cfg.bigImageFileId = fileId;
-      saveConfig(cfg);
-      adminStates.set(uid, "idle");
-      await bot.sendMessage(chatId, `✅ *BIG image saved!*`, { parse_mode: "Markdown", reply_markup: settingsKb() });
-    } else if (state === "wait_small_image") {
-      cfg.smallImageFileId = fileId;
-      saveConfig(cfg);
-      adminStates.set(uid, "idle");
-      await bot.sendMessage(chatId, `✅ *SMALL image saved!*`, { parse_mode: "Markdown", reply_markup: settingsKb() });
-    }
-    return;
-  }
-  const text = msg.text?.trim() ?? "";
-  if (!text) return;
-  if (state.startsWith("wait_s") && (state.endsWith("_start") || state.endsWith("_end")) && /^wait_s[1-4]_/.test(state)) {
-    const isStart = state.endsWith("_start");
-    const seasonIdx = currentSeasonIndex(state);
-    if (!/^\d{1,2}:\d{2}$/.test(text)) {
-      await bot.sendMessage(chatId, `❌ Wrong format! Use HH:MM e.g. \`09:00\``, { parse_mode: "Markdown" });
-      return;
-    }
-    const [hh, mm] = text.split(":").map(Number);
-    if (hh > 23 || mm > 59) {
-      await bot.sendMessage(chatId, `❌ Invalid time! Hours 0-23, Minutes 0-59`);
-      return;
-    }
-    const timeStr = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
-    if (isStart) {
-      const builds = seasonBuildState.get(uid) ?? [];
-      builds[seasonIdx] = { start: timeStr };
-      seasonBuildState.set(uid, builds);
-      const endState = `wait_s${seasonIdx + 1}_end`;
-      adminStates.set(uid, endState);
-      await bot.sendMessage(chatId, `✅ ${ordinal(seasonIdx)} Season Start: *${timeStr}*
+  const chatId = msg.chat.id;
 
-Now send *End Time*:`, { parse_mode: "Markdown" });
-    } else {
-      const builds = seasonBuildState.get(uid) ?? [];
-      const season = builds[seasonIdx] ?? {};
-      const [sh, sm] = (season.start ?? "00:00").split(":").map(Number);
-      if (hh * 60 + mm <= sh * 60 + sm) {
-        await bot.sendMessage(chatId, `❌ End time must be after start time (${season.start})!`);
+  if (state === "building_seasons") {
+    const sb = seasonBuildState.get(uid);
+    if (!sb) return;
+    const step = sb.step;
+    const text = msg.text?.trim() ?? "";
+
+    if (step === "wait_s1_start" || step === "wait_s2_start" || step === "wait_s3_start" || step === "wait_s4_start") {
+      const idx = currentSeasonIndex(step);
+      if (!/^\d{1,2}:\d{2}$/.test(text)) {
+        await bot.sendMessage(chatId, `❌ Invalid format. Use HH:MM (e.g. 09:00). Try again:`);
         return;
       }
-      season.end = timeStr;
-      cfg.seasons.push({ start: season.start, end: timeStr });
-      saveConfig(cfg);
-      const nextIdx = seasonIdx + 1;
-      const built = cfg.seasons.map((s, i) => `  Season ${i + 1}: ${s.start} – ${s.end}`).join("\n");
-      if (nextIdx < 4) {
-        const nextStartState = `wait_s${nextIdx + 1}_start`;
-        adminStates.set(uid, nextStartState);
-        await bot.sendMessage(
-          chatId,
-          `✅ *${ordinal(seasonIdx)} Season saved!*
-${built}
+      sb.seasons[idx] = { start: text, end: "" };
+      sb.step = step.replace("start", "end");
+      seasonBuildState.set(uid, sb);
+      await bot.sendMessage(chatId, `✅ Start set. Now enter *${ordinal(idx)} session END time* (HH:MM):`, { parse_mode: "Markdown" });
+      return;
+    }
 
-🕐 Send *${ordinal(nextIdx)} Season Start Time* or tap Done:`,
-          {
-            parse_mode: "Markdown",
-            reply_markup: { inline_keyboard: [[{ text: `✅ Done (${nextIdx} season${nextIdx > 1 ? "s" : ""} saved)`, callback_data: "season_skip" }]] }
-          }
-        );
-      } else {
+    if (step === "wait_s1_end" || step === "wait_s2_end" || step === "wait_s3_end" || step === "wait_s4_end") {
+      const idx = currentSeasonIndex(step);
+      if (!/^\d{1,2}:\d{2}$/.test(text)) {
+        await bot.sendMessage(chatId, `❌ Invalid format. Use HH:MM (e.g. 22:00). Try again:`);
+        return;
+      }
+      sb.seasons[idx].end = text;
+      const nextIdx = idx + 1;
+
+      const addMoreKb = {
+        inline_keyboard: [
+          [{ text: "➕ Add another session", callback_data: `add_season_${nextIdx}` }],
+          [{ text: "✅ Done", callback_data: "seasons_done" }]
+        ]
+      };
+
+      if (nextIdx >= 4) {
+        cfg.seasons = sb.seasons;
+        saveConfig(cfg);
         adminStates.set(uid, "idle");
-        await bot.sendMessage(chatId, `✅ *All 4 Sessions saved!*
-
-${built}`, { parse_mode: "Markdown", reply_markup: settingsKb() });
+        seasonBuildState.delete(uid);
+        await bot.sendMessage(chatId, `✅ *4 sessions saved!*\n${seasonsText()}`, { parse_mode: "Markdown", reply_markup: mainMenuKb() });
+      } else {
+        seasonBuildState.set(uid, sb);
+        await bot.sendMessage(chatId,
+          `✅ *Session ${idx + 1} saved!* (${sb.seasons[idx].start}–${sb.seasons[idx].end})\n\nAdd another or finish:`,
+          { parse_mode: "Markdown", reply_markup: addMoreKb }
+        );
       }
+      return;
     }
     return;
   }
-  switch (state) {
-    case "wait_channel": {
-      let channelId = text.trim();
-      const tmeMatch = channelId.match(/(?:https?:\/\/)?t\.me\/([A-Za-z0-9_]+)/i);
-      if (tmeMatch) channelId = `@${tmeMatch[1]}`;
-      else if (!channelId.startsWith("-") && !channelId.startsWith("@")) channelId = `@${channelId}`;
-      cfg.channelId = channelId;
-      saveConfig(cfg);
-      adminStates.set(uid, "idle");
-      await bot.sendMessage(chatId, `✅ *Channel set:* \`${cfg.channelId}\`
 
-🧪 সিগন্যাল যাচ্ছে কিনা দেখতে চাইলে TEST SIGNAL এ চাপ দেও`, { parse_mode: "Markdown", reply_markup: settingsKb() });
-      break;
-    }
-    case "wait_team_name": {
-      if (text.length < 2 || text.length > 30) {
-        await bot.sendMessage(chatId, `❌ Name must be 2–30 chars.`);
-        return;
-      }
-      cfg.teamName = text;
-      saveConfig(cfg);
-      adminStates.set(uid, "idle");
-      await bot.sendMessage(chatId, `✅ Team: *${text} AI BOT*`, { parse_mode: "Markdown", reply_markup: settingsKb() });
-      break;
-    }
+  // Handle add_season_N and seasons_done callbacks via message handler for inline reply
+  if (state === "idle") return;
+
+  if (state === "wait_channel") {
+    const val = msg.text?.trim();
+    if (!val) return;
+    cfg.channelId = val;
+    saveConfig(cfg);
+    adminStates.set(uid, "idle");
+    await bot.sendMessage(chatId, `✅ Channel set to: \`${val}\``, { parse_mode: "Markdown", reply_markup: mainMenuKb() });
+    return;
+  }
+  if (state === "wait_team_name") {
+    const val = msg.text?.trim();
+    if (!val) return;
+    cfg.teamName = val;
+    saveConfig(cfg);
+    adminStates.set(uid, "idle");
+    await bot.sendMessage(chatId, `✅ Team name set to: *${val}*`, { parse_mode: "Markdown", reply_markup: mainMenuKb() });
+    return;
+  }
+  if (state === "wait_big_image" && msg.photo) {
+    cfg.bigImageFileId = msg.photo[msg.photo.length - 1].file_id;
+    saveConfig(cfg);
+    adminStates.set(uid, "idle");
+    await bot.sendMessage(chatId, `✅ BIG image saved!`, { reply_markup: mainMenuKb() });
+    return;
+  }
+  if (state === "wait_small_image" && msg.photo) {
+    cfg.smallImageFileId = msg.photo[msg.photo.length - 1].file_id;
+    saveConfig(cfg);
+    adminStates.set(uid, "idle");
+    await bot.sendMessage(chatId, `✅ SMALL image saved!`, { reply_markup: mainMenuKb() });
+    return;
+  }
+  if (state === "wait_win_sticker" && msg.sticker) {
+    cfg.winStickerFileId = msg.sticker.file_id;
+    saveConfig(cfg);
+    adminStates.set(uid, "idle");
+    await bot.sendMessage(chatId, `✅ WIN sticker saved!`, { reply_markup: mainMenuKb() });
+    return;
+  }
+  if (state === "wait_loss_sticker" && msg.sticker) {
+    cfg.lossStickerFileId = msg.sticker.file_id;
+    saveConfig(cfg);
+    adminStates.set(uid, "idle");
+    await bot.sendMessage(chatId, `✅ LOSS sticker saved!`, { reply_markup: mainMenuKb() });
+    return;
+  }
+  if (state === "wait_season_start_sticker" && msg.sticker) {
+    cfg.seasonStartStickerFileId = msg.sticker.file_id;
+    saveConfig(cfg);
+    adminStates.set(uid, "idle");
+    await bot.sendMessage(chatId, `✅ Season START sticker saved!`, { reply_markup: mainMenuKb() });
+    return;
+  }
+  if (state === "wait_season_end_sticker" && msg.sticker) {
+    cfg.seasonEndStickerFileId = msg.sticker.file_id;
+    saveConfig(cfg);
+    adminStates.set(uid, "idle");
+    await bot.sendMessage(chatId, `✅ Season END sticker saved!`, { reply_markup: mainMenuKb() });
+    return;
   }
 });
-bot.on("polling_error", (err) => {
-  const msg = err.message ?? "";
-  if (msg.includes("ETELEGRAM") && msg.includes("timeout")) return;
-  if (msg.includes("query is too old")) return;
-  console.error("Polling error:", msg);
+
+// Handle add_season inline button presses
+bot.on("callback_query", async (query) => {
+  const uid = query.from.id;
+  const chatId = query.message.chat.id;
+  const data = query.data ?? "";
+
+  if (data.startsWith("add_season_")) {
+    const idx = parseInt(data.split("_")[2]);
+    const sb = seasonBuildState.get(uid);
+    if (!sb) return;
+    await safeAnswer(query.id);
+    sb.step = `wait_s${idx + 1}_start`;
+    seasonBuildState.set(uid, sb);
+    adminStates.set(uid, "building_seasons");
+    await bot.sendMessage(chatId, `Enter *${ordinal(idx)} session START time* (HH:MM):`, { parse_mode: "Markdown" });
+    return;
+  }
+
+  if (data === "seasons_done") {
+    const sb = seasonBuildState.get(uid);
+    if (!sb) return;
+    await safeAnswer(query.id);
+    cfg.seasons = sb.seasons;
+    saveConfig(cfg);
+    adminStates.set(uid, "idle");
+    seasonBuildState.delete(uid);
+    await bot.sendMessage(chatId, `✅ *Sessions saved!*\n${seasonsText()}`, { parse_mode: "Markdown", reply_markup: mainMenuKb() });
+    return;
+  }
 });
-process.on("unhandledRejection", (reason) => {
-  const msg = String(reason);
-  if (msg.includes("query is too old") || msg.includes("ETELEGRAM")) return;
-  console.error("Unhandled rejection:", reason);
-});
-const PORT = parseInt(process.env.PORT ?? "3000", 10);
-const healthServer = http.createServer((req, res) => {
-  const uptime = Math.floor(process.uptime());
-  const { h, m, dateStr } = getBDTime();
-  const nowStr = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-  const body = JSON.stringify({
-    status: "ok",
-    bot: cfg.teamName + " AI BOT",
-    running: cfg.isRunning,
-    channel: cfg.channelId || "not set",
-    uptime_seconds: uptime,
-    bd_time: nowStr,
-    date: dateStr,
-    in_session: isInSession(),
-    last_period: lastSentPeriod || "none",
-    session_history_count: cfg.sessionHistory.length
-  });
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(body);
-});
-healthServer.listen(PORT, () => {
-  console.log(`🌐 Health server running on port ${PORT}`);
-});
-console.log("🤖 DeSh Club Wingo Bot starting...");
-cfg = loadConfig();
+
+console.log(`🤖 ${cfg.teamName} AI BOT started. Send /start to configure.`);
 if (cfg.isRunning) {
-  console.log("▶️  Auto-resuming signal loop...");
+  console.log("▶️  Resuming signal loop (was running before restart)");
   startSignalLoop();
 }
-console.log("✅ Bot polling for messages...");
